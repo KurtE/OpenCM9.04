@@ -193,42 +193,39 @@ unsigned short Protocol2PacketHandler::updateCRC(uint16_t crc_accum, uint8_t *da
 
   return crc_accum;
 }
-
 void Protocol2PacketHandler::addStuffing(uint8_t *packet)
 {
-  int i = 0, index = 0;
-  int packet_length_in = DXL_MAKEWORD(packet[PKT_LENGTH_L], packet[PKT_LENGTH_H]);
-  int packet_length_out = packet_length_in;
-  uint8_t temp[TXPACKET_MAX_LEN] = {0};
+  uint16_t packet_length_in = DXL_MAKEWORD(packet[PKT_LENGTH_L], packet[PKT_LENGTH_H]);
+  uint16_t packet_length_out = packet_length_in;
+  if (packet_length_in < 5) return; // less CRC so if not at least 3 data bytes won't be issue
 
-  for (uint16_t s = PKT_HEADER0; s <= PKT_LENGTH_H; s++)
-    temp[s] = packet[s]; // FF FF FD XX ID LEN_L LEN_H
-  //memcpy(temp, packet, PKT_LENGTH_H+1);
-  index = PKT_INSTRUCTION;
-  for (i = 0; i < packet_length_in - 2; i++)  // except CRC
+  uint16_t length_before_crc = packet_length_in - 2;
+  for (uint16_t i = 0; i < length_before_crc; i++)  // except CRC
   {
-    temp[index++] = packet[i+PKT_INSTRUCTION];
     if (packet[i+PKT_INSTRUCTION] == 0xFD && packet[i+PKT_INSTRUCTION-1] == 0xFF && packet[i+PKT_INSTRUCTION-2] == 0xFF)
-    {   // FF FF FD
-      temp[index++] = 0xFD;
-      packet_length_out++;
+    {
+      if ((i == (length_before_crc-1)) || (packet[i+PKT_INSTRUCTION+1] != 0xFD)){
+        packet_length_out++;  // check to make sure it was not already stuffed. 
+      }
     }
+  }  
+  if (packet_length_in == packet_length_out) return;  // No new padding added.
+  // BUGBUG:: using realloc which could move to new address... ?
+  packet = (uint8_t *)realloc(packet, packet_length_out + 7);
+  if (packet == NULL)   return; // we have problems!
+
+  // now lets move the data down - won't handle ff ff fd fd here as if any pre stuffed expect fullly done
+  uint8_t *packet_stuff_ptr = &packet[packet_length_out + 6];
+  uint8_t *packet_pre_stuff_ptr =  &packet[packet_length_in + 6];
+  while(packet_stuff_ptr != packet_pre_stuff_ptr)
+  {
+    if ((packet_pre_stuff_ptr[0] == 0xFD) && (packet_pre_stuff_ptr[-1] == 0xFF) && (packet_pre_stuff_ptr[-2] == 0xFF))
+    {
+      *packet_stuff_ptr-- = 0xFD; // stuff out new byte;
+    }
+    *packet_stuff_ptr-- = *packet_pre_stuff_ptr--;  // copy the byte down
   }
-  temp[index++] = packet[PKT_INSTRUCTION+packet_length_in-2];
-  temp[index++] = packet[PKT_INSTRUCTION+packet_length_in-1];
-
-
-  //////////////////////////
-  if (packet_length_in != packet_length_out)
-    packet = (uint8_t *)realloc(packet, index * sizeof(uint8_t));
-
-  ///////////////////////////
-
-  for (uint16_t s = 0; s < index; s++)
-    packet[s] = temp[s];
-  //memcpy(packet, temp, index);
-  packet[PKT_LENGTH_L] = DXL_LOBYTE(packet_length_out);
-  packet[PKT_LENGTH_H] = DXL_HIBYTE(packet_length_out);
+  return;
 }
 
 void Protocol2PacketHandler::removeStuffing(uint8_t *packet)
@@ -264,7 +261,7 @@ int Protocol2PacketHandler::txPacket(PortHandler *port, uint8_t *txpacket)
   port->is_using_ = true;
 
   // byte stuffing for header - done before calling here...
-  //addStuffing(txpacket);
+  addStuffing(txpacket);
 
   // check max packet length
   total_packet_length = DXL_MAKEWORD(txpacket[PKT_LENGTH_L], txpacket[PKT_LENGTH_H]) + 7;
@@ -987,7 +984,6 @@ int Protocol2PacketHandler::syncWriteTxOnly(PortHandler *port, uint16_t start_ad
     txpacket[PKT_PARAMETER0+4+s] = param[s];
   //memcpy(&txpacket[PKT_PARAMETER0+4], param, param_length);
 
-  addStuffing(txpacket);
   result = txRxPacket(port, txpacket, 0, 0);
 
   free(txpacket);
@@ -1042,7 +1038,6 @@ int Protocol2PacketHandler::bulkWriteTxOnly(PortHandler *port, uint8_t *param, u
   for (uint16_t s = 0; s < param_length; s++)
     txpacket[PKT_PARAMETER0+s] = param[s];
   //memcpy(&txpacket[PKT_PARAMETER0], param, param_length);
-  addStuffing(txpacket);
   result = txRxPacket(port, txpacket, 0, 0);
 
   free(txpacket);
