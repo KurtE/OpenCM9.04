@@ -34,7 +34,7 @@ void setup()
   Serial.begin(57600);
   while (!Serial); // Open a Serial Monitor
   Serial.println("Find Dynamixel Servos test");
-  Serial.print("Size of DynamixelWorkbench: "); Serial.println(sizeof(DynamixelWorkbench), DEC);
+  //Serial.print("Size of DynamixelWorkbench: "); Serial.println(sizeof(DynamixelWorkbench), DEC);
 
 }
 
