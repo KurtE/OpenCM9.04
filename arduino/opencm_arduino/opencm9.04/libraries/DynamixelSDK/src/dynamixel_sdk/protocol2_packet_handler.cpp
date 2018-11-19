@@ -193,6 +193,7 @@ unsigned short Protocol2PacketHandler::updateCRC(uint16_t crc_accum, uint8_t *da
 
   return crc_accum;
 }
+
 void Protocol2PacketHandler::addStuffing(uint8_t *packet)
 {
   uint16_t packet_length_in = DXL_MAKEWORD(packet[PKT_LENGTH_L], packet[PKT_LENGTH_H]);
@@ -215,16 +216,17 @@ void Protocol2PacketHandler::addStuffing(uint8_t *packet)
   if (packet == NULL)   return; // we have problems!
 
   // now lets move the data down - won't handle ff ff fd fd here as if any pre stuffed expect fullly done
-  uint8_t *packet_stuff_ptr = &packet[packet_length_out + 6];
-  uint8_t *packet_pre_stuff_ptr =  &packet[packet_length_in + 6];
-  while(packet_stuff_ptr != packet_pre_stuff_ptr)
+  uint16_t out_index = packet_length_out + 6 - 2;   // We only want to go from Instruction to before CRC
+  uint16_t in_index = packet_length_in + 6 - 2;
+  while((in_index >= 2) && (out_index != in_index)) // First part of if not needed unless something got messsed up?
   {
-    if ((packet_pre_stuff_ptr[0] == 0xFD) && (packet_pre_stuff_ptr[-1] == 0xFF) && (packet_pre_stuff_ptr[-2] == 0xFF))
+    if ((packet[in_index-0] == 0xFD) && (packet[in_index-1] == 0xFF) && (packet[in_index-2] == 0xFF))
     {
-      *packet_stuff_ptr-- = 0xFD; // stuff out new byte;
+      packet[out_index--] = 0xFD; // stuff out new byte;
     }
-    *packet_stuff_ptr-- = *packet_pre_stuff_ptr--;  // copy the byte down
+    packet[out_index--] = packet[in_index--];  // copy the byte down
   }
+
   return;
 }
 
@@ -260,7 +262,7 @@ int Protocol2PacketHandler::txPacket(PortHandler *port, uint8_t *txpacket)
     return COMM_PORT_BUSY;
   port->is_using_ = true;
 
-  // byte stuffing for header - done before calling here...
+  // byte stuffing for header
   addStuffing(txpacket);
 
   // check max packet length
@@ -408,16 +410,12 @@ int Protocol2PacketHandler::rxPacket(PortHandler *port, uint8_t *rxpacket)
 // NOT for BulkRead / SyncRead instruction
 int Protocol2PacketHandler::txRxPacket(PortHandler *port, uint8_t *txpacket, uint8_t *rxpacket, uint8_t *error)
 {
-  //Serial.printf("p2::txRxPacket ");
   int result = COMM_TX_FAIL;
 
   // tx packet
   result = txPacket(port, txpacket);
   if (result != COMM_SUCCESS)
-  {
-    //Serial.printf("txPacket: failed:%d\n", result);
     return result;
-  }
 
   // (Instruction == BulkRead or SyncRead) == this function is not available.
   if (txpacket[PKT_INSTRUCTION] == INST_BULK_READ || txpacket[PKT_INSTRUCTION] == INST_SYNC_READ)
@@ -445,7 +443,6 @@ int Protocol2PacketHandler::txRxPacket(PortHandler *port, uint8_t *txpacket, uin
   // rx packet
   do {
     result = rxPacket(port, rxpacket);
-    //Serial.printf("rxPacket: %d ID:%d\n", result, rxpacket[PKT_ID]);
   } while (result == COMM_SUCCESS && txpacket[PKT_ID] != rxpacket[PKT_ID]);
 
   if (result == COMM_SUCCESS && txpacket[PKT_ID] == rxpacket[PKT_ID])
